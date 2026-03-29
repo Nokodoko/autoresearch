@@ -1,0 +1,25 @@
+# autoresearch configuration
+script: train.py         # Path to experiment script
+metric: val_bpb          # Metric name to parse from output
+direction: minimize      # minimize or maximize
+branch: ""               # Git branch (auto-generated if empty)
+run_command: "uv run"    # Command prefix to run the script
+target_file: train.py    # File the LLM modifies
+
+# Execution
+iterations: 0            # 0 = unlimited
+threshold: 0.0           # Min improvement to commit
+parallel: 5              # Parallel experiment channels
+timeout: 10m             # Max time per experiment
+
+# LLM
+llm_backend: claude      # claude, openai, llamacpp
+llm_model: ""            # Empty = provider default
+llm_temperature: 0.7
+
+# Guard rails
+max_consecutive_failures: 10
+max_total_crashes: 20
+
+# TUI
+tui: true

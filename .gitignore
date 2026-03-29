@@ -21,3 +21,13 @@ dev/
 
 # Results file
 results.tsv
+
+# Go binary
+autoresearch
+
+# autoresearch runtime
+.autoresearch/results.jsonl
+.autoresearch/worktrees/
+
+# Run logs
+run.log
