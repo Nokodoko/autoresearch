@@ -51,7 +51,7 @@ func (l *LlamaCppProvider) Name() string {
 // Propose runs llama.cpp locally to generate a proposal.
 func (l *LlamaCppProvider) Propose(ctx context.Context, req ProposalRequest) (*Proposal, error) {
 	systemPrompt := BuildSystemPrompt(req.MetricName, req.MetricDirection)
-	userPrompt := BuildUserPrompt(req.FileContents, req.PastResults, req.BestMetric, req.MetricName)
+	userPrompt := BuildUserPrompt(req.FileContents, req.PastResults, req.BestMetric, req.MetricName, req.OB1History)
 
 	fullPrompt := fmt.Sprintf("[INST] <<SYS>>\n%s\n<</SYS>>\n\n%s [/INST]", systemPrompt, userPrompt)
 

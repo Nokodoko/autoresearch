@@ -11,6 +11,7 @@ import (
 	"github.com/n0ko/autoresearch/internal/guardrails"
 	"github.com/n0ko/autoresearch/internal/llm"
 	"github.com/n0ko/autoresearch/internal/metrics"
+	"github.com/n0ko/autoresearch/internal/ob1"
 	"github.com/n0ko/autoresearch/internal/results"
 	"github.com/n0ko/autoresearch/internal/runner"
 )
@@ -36,11 +37,13 @@ type Engine struct {
 	runner      *runner.Runner
 	provider    llm.Provider
 	guard       *guardrails.Guard
+	ob1Client   *ob1.Client // nil if ob1 integration disabled
 	bestMetric  float64
 	events      chan Event
 }
 
 // NewEngine creates a new loop engine.
+// ob1Client may be nil to disable OpenBrain integration.
 func NewEngine(
 	cfg *config.Config,
 	gitOps *gitpkg.Ops,
@@ -49,6 +52,7 @@ func NewEngine(
 	expRunner *runner.Runner,
 	provider llm.Provider,
 	guard *guardrails.Guard,
+	ob1Client *ob1.Client,
 ) *Engine {
 	return &Engine{
 		cfg:        cfg,
@@ -58,6 +62,7 @@ func NewEngine(
 		runner:     expRunner,
 		provider:   provider,
 		guard:      guard,
+		ob1Client:  ob1Client,
 		bestMetric: metrics.WorstValue(cfg.Direction),
 		events:     make(chan Event, 100),
 	}
@@ -149,6 +154,7 @@ func (e *Engine) runBaseline(ctx context.Context, targetFile string) error {
 		Description:  "baseline",
 	}
 	e.resLog.Append(r)
+	e.writeToOB1(ctx, r)
 	e.guard.RecordSuccess()
 
 	e.sendEvent(Event{
@@ -162,7 +168,7 @@ func (e *Engine) runBaseline(ctx context.Context, targetFile string) error {
 // runIteration runs a single optimization iteration.
 func (e *Engine) runIteration(ctx context.Context, targetFile string, iteration int) error {
 	// 1. Build context
-	loopCtx, err := BuildContext(e.gitOps, e.resLog, targetFile, e.cfg.WorkDir, iteration, e.bestMetric)
+	loopCtx, err := BuildContext(e.gitOps, e.resLog, e.ob1Client, targetFile, e.cfg.WorkDir, iteration, e.bestMetric, e.cfg.Metric)
 	if err != nil {
 		return fmt.Errorf("building context: %w", err)
 	}
@@ -176,6 +182,7 @@ func (e *Engine) runIteration(ctx context.Context, targetFile string, iteration 
 		MetricName:      e.cfg.Metric,
 		MetricDirection: e.cfg.Direction,
 		BestMetric:      e.bestMetric,
+		OB1History:      loopCtx.OB1History,
 	})
 	if err != nil {
 		return fmt.Errorf("LLM proposal: %w", err)
@@ -219,6 +226,7 @@ func (e *Engine) runIteration(ctx context.Context, targetFile string, iteration 
 			Error:        truncate(fmt.Sprintf("%v", expResult.Err), 200),
 		}
 		e.resLog.Append(r)
+		e.writeToOB1(ctx, r)
 		e.guard.RecordFailure()
 
 		e.sendEvent(Event{
@@ -246,6 +254,7 @@ func (e *Engine) runIteration(ctx context.Context, targetFile string, iteration 
 			Error:        err.Error(),
 		}
 		e.resLog.Append(r)
+		e.writeToOB1(ctx, r)
 		e.guard.RecordFailure()
 
 		e.sendEvent(Event{
@@ -281,6 +290,7 @@ func (e *Engine) runIteration(ctx context.Context, targetFile string, iteration 
 		Description:  proposal.Description,
 	}
 	e.resLog.Append(r)
+	e.writeToOB1(ctx, r)
 	e.guard.RecordSuccess()
 
 	e.sendEvent(Event{
@@ -318,6 +328,29 @@ func (e *Engine) printSummary() {
 	if stats.Total > 1 {
 		fmt.Printf("Baseline: %.6f\n", stats.BaselineMetric)
 		fmt.Printf("Total improvement: %.6f (%.2f%%)\n", stats.Improvement, stats.ImprovementPct*100)
+	}
+}
+
+// writeToOB1 writes an experiment result to OpenBrain (best-effort).
+// If the ob1 client is nil or the write fails, it logs a warning and continues.
+func (e *Engine) writeToOB1(ctx context.Context, r results.Result) {
+	if e.ob1Client == nil {
+		return
+	}
+	entry := ob1.ExperimentEntry{
+		Iteration:   r.Iteration,
+		Channel:     r.Channel,
+		MetricName:  r.MetricName,
+		MetricValue: r.MetricValue,
+		BestMetric:  r.BestMetric,
+		Status:      r.Status,
+		Description: r.Description,
+		Commit:      r.Commit,
+		Branch:      e.cfg.Branch,
+		Timestamp:   r.Timestamp,
+	}
+	if err := e.ob1Client.WriteExperimentResult(ctx, entry); err != nil {
+		log.Printf("ob1: failed to write result: %v", err)
 	}
 }
 

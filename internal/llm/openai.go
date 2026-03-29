@@ -54,7 +54,7 @@ func (o *OpenAIProvider) Name() string {
 // Propose sends a proposal request to the OpenAI-compatible API.
 func (o *OpenAIProvider) Propose(ctx context.Context, req ProposalRequest) (*Proposal, error) {
 	systemPrompt := BuildSystemPrompt(req.MetricName, req.MetricDirection)
-	userPrompt := BuildUserPrompt(req.FileContents, req.PastResults, req.BestMetric, req.MetricName)
+	userPrompt := BuildUserPrompt(req.FileContents, req.PastResults, req.BestMetric, req.MetricName, req.OB1History)
 
 	body := map[string]any{
 		"model":       o.model,

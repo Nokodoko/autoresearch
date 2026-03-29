@@ -44,7 +44,8 @@ IMPORTANT:
 }
 
 // BuildUserPrompt constructs the user prompt with context.
-func BuildUserPrompt(files map[string]string, pastResults []results.Result, bestMetric float64, metricName string) string {
+// ob1History is an optional pre-formatted section from OpenBrain (empty string if disabled).
+func BuildUserPrompt(files map[string]string, pastResults []results.Result, bestMetric float64, metricName, ob1History string) string {
 	var sb strings.Builder
 
 	// File contents
@@ -53,7 +54,7 @@ func BuildUserPrompt(files map[string]string, pastResults []results.Result, best
 		sb.WriteString(fmt.Sprintf("### %s\n```\n%s\n```\n\n", name, content))
 	}
 
-	// Past results
+	// Past results (local JSONL log)
 	if len(pastResults) > 0 {
 		sb.WriteString("## Past Experiment Results\n\n")
 		sb.WriteString(fmt.Sprintf("Best %s so far: %.6f\n\n", metricName, bestMetric))
@@ -71,6 +72,11 @@ func BuildUserPrompt(files map[string]string, pastResults []results.Result, best
 				r.Iteration, r.Status, r.MetricValue, r.Description))
 		}
 		sb.WriteString("\n")
+	}
+
+	// OpenBrain experiment history (cross-session memory)
+	if ob1History != "" {
+		sb.WriteString(ob1History)
 	}
 
 	sb.WriteString(fmt.Sprintf("Propose your next change to improve %s. Remember: ONE change, keep it simple.\n", metricName))

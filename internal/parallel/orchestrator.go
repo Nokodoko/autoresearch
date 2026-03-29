@@ -13,6 +13,7 @@ import (
 	"github.com/n0ko/autoresearch/internal/llm"
 	"github.com/n0ko/autoresearch/internal/loop"
 	"github.com/n0ko/autoresearch/internal/metrics"
+	"github.com/n0ko/autoresearch/internal/ob1"
 	"github.com/n0ko/autoresearch/internal/results"
 	"github.com/n0ko/autoresearch/internal/runner"
 )
@@ -31,26 +32,30 @@ type ChannelResult struct {
 
 // Orchestrator manages parallel experiment execution.
 type Orchestrator struct {
-	cfg     *config.Config
-	engine  *loop.Engine
-	gitOps  *gitpkg.Ops
-	resLog  *results.Log
-	events  chan loop.Event
+	cfg       *config.Config
+	engine    *loop.Engine
+	gitOps    *gitpkg.Ops
+	resLog    *results.Log
+	ob1Client *ob1.Client // nil if ob1 integration disabled
+	events    chan loop.Event
 }
 
 // NewOrchestrator creates a parallel orchestrator.
+// ob1Client may be nil to disable OpenBrain integration.
 func NewOrchestrator(
 	cfg *config.Config,
 	engine *loop.Engine,
 	gitOps *gitpkg.Ops,
 	resLog *results.Log,
+	ob1Client *ob1.Client,
 ) *Orchestrator {
 	return &Orchestrator{
-		cfg:    cfg,
-		engine: engine,
-		gitOps: gitOps,
-		resLog: resLog,
-		events: make(chan loop.Event, 100),
+		cfg:       cfg,
+		engine:    engine,
+		gitOps:    gitOps,
+		resLog:    resLog,
+		ob1Client: ob1Client,
+		events:    make(chan loop.Event, 100),
 	}
 }
 
@@ -102,7 +107,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	log.Printf("Baseline %s: %.6f", o.cfg.Metric, baselineMetric)
 
 	commit, _ := o.gitOps.CurrentCommit()
-	o.resLog.Append(results.Result{
+	baselineResult_ := results.Result{
 		Timestamp:   time.Now().UTC(),
 		Iteration:   0,
 		Commit:      commit,
@@ -112,7 +117,9 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		Status:      "keep",
 		DurationSecs: baselineResult.Duration.Seconds(),
 		Description: "baseline",
-	})
+	}
+	o.resLog.Append(baselineResult_)
+	o.writeToOB1(ctx, baselineResult_)
 
 	// Main parallel loop
 	iteration := 1
@@ -153,7 +160,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 			}
 
 			// Log result
-			o.resLog.Append(results.Result{
+			crResult := results.Result{
 				Timestamp:    time.Now().UTC(),
 				Iteration:    iteration,
 				Channel:      cr.Channel,
@@ -165,7 +172,9 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 				DurationSecs: cr.Duration.Seconds(),
 				Description:  cr.Description,
 				Worktree:     cr.Worktree.Path,
-			})
+			}
+			o.resLog.Append(crResult)
+			o.writeToOB1(ctx, crResult)
 
 			o.sendEvent(loop.Event{
 				Type: "result", Iteration: iteration, Channel: cr.Channel,
@@ -214,6 +223,17 @@ func (o *Orchestrator) dispatchParallel(
 
 	pastResults, _ := o.resLog.ReadAll()
 
+	// Fetch ob1 experiment history (best-effort, shared across all channels).
+	var ob1History string
+	if o.ob1Client != nil {
+		entries, err := o.ob1Client.ReadExperimentHistory(ctx, 50)
+		if err != nil {
+			log.Printf("ob1: failed to read experiment history: %v", err)
+		} else {
+			ob1History = ob1.FormatHistory(entries, o.cfg.Metric)
+		}
+	}
+
 	for ch := 0; ch < o.cfg.Parallel; ch++ {
 		wg.Add(1)
 		go func(channel int) {
@@ -241,6 +261,7 @@ func (o *Orchestrator) dispatchParallel(
 				MetricName:      o.cfg.Metric,
 				MetricDirection: o.cfg.Direction,
 				BestMetric:      bestMetric,
+				OB1History:      ob1History,
 			})
 			if err != nil {
 				log.Printf("  Channel %d: LLM proposal failed: %v", channel, err)
@@ -338,6 +359,28 @@ func (o *Orchestrator) sendEvent(ev loop.Event) {
 	select {
 	case o.events <- ev:
 	default:
+	}
+}
+
+// writeToOB1 writes an experiment result to OpenBrain (best-effort).
+func (o *Orchestrator) writeToOB1(ctx context.Context, r results.Result) {
+	if o.ob1Client == nil {
+		return
+	}
+	entry := ob1.ExperimentEntry{
+		Iteration:   r.Iteration,
+		Channel:     r.Channel,
+		MetricName:  r.MetricName,
+		MetricValue: r.MetricValue,
+		BestMetric:  r.BestMetric,
+		Status:      r.Status,
+		Description: r.Description,
+		Commit:      r.Commit,
+		Branch:      o.cfg.Branch,
+		Timestamp:   r.Timestamp,
+	}
+	if err := o.ob1Client.WriteExperimentResult(ctx, entry); err != nil {
+		log.Printf("ob1: failed to write result: %v", err)
 	}
 }
 

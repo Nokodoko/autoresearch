@@ -49,7 +49,7 @@ func (c *ClaudeProvider) Name() string {
 // Propose sends a proposal request to Claude and parses the response.
 func (c *ClaudeProvider) Propose(ctx context.Context, req ProposalRequest) (*Proposal, error) {
 	systemPrompt := BuildSystemPrompt(req.MetricName, req.MetricDirection)
-	userPrompt := BuildUserPrompt(req.FileContents, req.PastResults, req.BestMetric, req.MetricName)
+	userPrompt := BuildUserPrompt(req.FileContents, req.PastResults, req.BestMetric, req.MetricName, req.OB1History)
 
 	body := map[string]any{
 		"model":       c.model,

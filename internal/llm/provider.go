@@ -17,6 +17,7 @@ type ProposalRequest struct {
 	MetricDirection string
 	BestMetric      float64
 	Constraints     []string
+	OB1History      string // Pre-formatted OpenBrain history section (empty if disabled)
 }
 
 // Proposal is the LLM's suggested code change.

@@ -49,6 +49,10 @@ type Config struct {
 
 	// Dry run
 	DryRun bool `mapstructure:"dry_run"`
+
+	// OpenBrain integration (optional, disabled when OB1URL is empty)
+	OB1URL    string `mapstructure:"ob1_url"`
+	OB1APIKey string `mapstructure:"ob1_api_key"`
 }
 
 // Load reads configuration from file, environment, and applies defaults.
@@ -76,6 +80,10 @@ func Load(configPath string) (*Config, error) {
 		v.AddConfigPath(DefaultConfigDir)
 		v.AddConfigPath(".")
 	}
+
+	// OpenBrain defaults
+	v.SetDefault("ob1_url", "")
+	v.SetDefault("ob1_api_key", "")
 
 	// Environment variables
 	v.SetEnvPrefix("AUTORESEARCH")
